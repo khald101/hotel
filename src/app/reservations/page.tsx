@@ -812,7 +812,22 @@ export default function ReservationsPage() {
                     <label className="block text-slate-600 font-bold mb-1">نوع الغرفة أو الشقة:</label>
                     <select
                       value={form.roomTypeId}
-                      onChange={(e) => setForm({ ...form, roomTypeId: e.target.value, assignedRoomId: '' })}
+                      onChange={(e) => {
+                        const newTypeId = e.target.value;
+                        const matching = rooms.find(
+                          (r) =>
+                            r.roomTypeId === newTypeId &&
+                            r.occupancyStatus === 'VACANT' &&
+                            r.cleaningStatus === 'INSPECTED_PASSED' &&
+                            r.maintenanceStatus === 'OPERATIONAL' &&
+                            r.saleStatus === 'AVAILABLE'
+                        );
+                        setForm({
+                          ...form,
+                          roomTypeId: newTypeId,
+                          assignedRoomId: matching?.id || '',
+                        });
+                      }}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold"
                     >
                       {roomTypes.map((rt) => (
@@ -873,15 +888,16 @@ export default function ReservationsPage() {
                 </div>
 
                 <div>
-                  <label className="block text-slate-600 font-bold mb-1">
-                    تخصيص غرفة محددة مسبقاً (فقط الغرف الفاضية والجاهزة والمفتشة):
+                  <label className="block text-slate-700 font-bold mb-1">
+                    تحديد الغرفة أو الشقة المحجوزة للنزيل (تثبيت فوري ومباشر في الحجز) <span className="text-rose-500">*</span>:
                   </label>
                   <select
                     value={form.assignedRoomId}
                     onChange={(e) => setForm({ ...form, assignedRoomId: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-semibold"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 font-bold text-slate-800"
+                    required
                   >
-                    <option value="">تخصيص تلقائي لاحقاً (عند الوصول)</option>
+                    <option value="">-- اختر الغرفة أو الشقة لتثبيتها لهذا الحجز --</option>
                     {rooms.filter(
                       (r) =>
                         r.roomTypeId === form.roomTypeId &&
@@ -891,7 +907,7 @@ export default function ReservationsPage() {
                         r.saleStatus === 'AVAILABLE'
                     ).length === 0 ? (
                       <option value="" disabled>
-                        ⚠️ لا توجد غرف فاضية وجاهزة ومفتشة حالياً من هذا النوع
+                        ⚠️ لا توجد وحدات فاضية وجاهزة ومفتشة حالياً من هذا النوع
                       </option>
                     ) : (
                       rooms
@@ -905,11 +921,14 @@ export default function ReservationsPage() {
                         )
                         .map((r) => (
                           <option key={r.id} value={r.id}>
-                            غرفة #{r.roomNumber} (طابق {r.floor?.floorNumber}) - شاغرة وجاهزة ومفتشة للتسكين ✅
+                            وحدة #{r.roomNumber} ({r.roomType?.nameAr}) - طابق {r.floor?.floorNumber} - شاغرة وجاهزة ومفتشة ✅
                           </option>
                         ))
                     )}
                   </select>
+                  <p className="mt-1 text-[11px] text-emerald-700 font-medium">
+                    ✓ سيتم تثبيت هذه الوحدة باسم النزيل، وستظهر تلقائياً بنفس الرقم في شاشة الاستقبال والتسكين فور وصوله.
+                  </p>
                 </div>
 
                 <div>

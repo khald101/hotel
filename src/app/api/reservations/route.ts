@@ -107,15 +107,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    let finalAssignedRoomId = assignedRoomId || null;
+
     // Double-Booking Prevention & Strict Room Readiness Verification:
     // If a specific room is assigned, verify it is empty and completely ready (vacant, inspected, operational, available)
-    if (assignedRoomId) {
+    if (finalAssignedRoomId) {
       const targetRoom = await prisma.room.findUnique({
-        where: { id: assignedRoomId },
+        where: { id: finalAssignedRoomId },
       });
 
       if (!targetRoom) {
-        return NextResponse.json({ error: 'الغرفة المحددة غير موجودة' }, { status: 404 });
+        return NextResponse.json({ error: 'الغرفة أو الشقة المحددة غير موجودة' }, { status: 404 });
       }
 
       const isRoomCompletelyReady =
@@ -127,7 +129,7 @@ export async function POST(req: NextRequest) {
       if (!isRoomCompletelyReady) {
         return NextResponse.json(
           {
-            error: `لا يمكن حجز الغرفة #${targetRoom.roomNumber} لأنها غير جاهزة بالكامل (حالتها الحالية: ${targetRoom.occupancyStatus} / ${targetRoom.cleaningStatus} / ${targetRoom.maintenanceStatus}). يسمح النظام فقط بحجز الغرف الفاضية والجاهزة والمفتشة.`,
+            error: `لا يمكن حجز الوحدة #${targetRoom.roomNumber} لأنها غير جاهزة بالكامل (حالتها الحالية: ${targetRoom.occupancyStatus} / ${targetRoom.cleaningStatus} / ${targetRoom.maintenanceStatus}). يسمح النظام فقط بحجز الغرف والشقق الفاضية والجاهزة والمفتشة.`,
           },
           { status: 422 }
         );
@@ -136,7 +138,7 @@ export async function POST(req: NextRequest) {
       const conflictingBooking = await prisma.reservation.findFirst({
         where: {
           hotelId: session.hotelId,
-          assignedRoomId: assignedRoomId,
+          assignedRoomId: finalAssignedRoomId,
           status: { in: ['CONFIRMED', 'CHECKED_IN'] },
           AND: [
             { checkInDate: { lt: checkOutDate } },
@@ -148,34 +150,68 @@ export async function POST(req: NextRequest) {
       if (conflictingBooking) {
         return NextResponse.json(
           {
-            error: `الغرفة المحددة محجوزة مسبقاً في نفس الفترة (الحجز رقم: ${conflictingBooking.confirmationNo}). يرجى اختيار غرفة أخرى أو تغيير التواريخ.`,
+            error: `الوحدة المحددة محجوزة مسبقاً في نفس الفترة (الحجز رقم: ${conflictingBooking.confirmationNo}). يرجى اختيار وحدة أخرى أو تغيير التواريخ.`,
           },
           { status: 409 }
         );
       }
     } else {
-      // Check inventory availability for the room type:
-      const totalRoomsOfType = await prisma.room.count({
-        where: { hotelId: session.hotelId, roomTypeId, active: true },
-      });
-
-      const overlappingCount = await prisma.reservation.count({
+      // Auto-assign: Find the first ready vacant room/apartment of this type without date conflict
+      const candidateRooms = await prisma.room.findMany({
         where: {
           hotelId: session.hotelId,
           roomTypeId,
-          status: { in: ['CONFIRMED', 'CHECKED_IN'] },
-          AND: [
-            { checkInDate: { lt: checkOutDate } },
-            { checkOutDate: { gt: checkInDate } },
-          ],
+          occupancyStatus: 'VACANT',
+          cleaningStatus: 'INSPECTED_PASSED',
+          maintenanceStatus: 'OPERATIONAL',
+          saleStatus: 'AVAILABLE',
+          active: true,
         },
+        orderBy: { roomNumber: 'asc' },
       });
 
-      if (overlappingCount >= totalRoomsOfType) {
-        return NextResponse.json(
-          { error: `عفواً، لا توجد غرف متاحة من نوع (${roomType.nameAr}) في الفترة المحددة.` },
-          { status: 409 }
-        );
+      for (const cand of candidateRooms) {
+        const conflict = await prisma.reservation.findFirst({
+          where: {
+            hotelId: session.hotelId,
+            assignedRoomId: cand.id,
+            status: { in: ['CONFIRMED', 'CHECKED_IN'] },
+            AND: [
+              { checkInDate: { lt: checkOutDate } },
+              { checkOutDate: { gt: checkInDate } },
+            ],
+          },
+        });
+        if (!conflict) {
+          finalAssignedRoomId = cand.id;
+          break;
+        }
+      }
+
+      if (!finalAssignedRoomId) {
+        // Check overall inventory
+        const totalRoomsOfType = await prisma.room.count({
+          where: { hotelId: session.hotelId, roomTypeId, active: true },
+        });
+
+        const overlappingCount = await prisma.reservation.count({
+          where: {
+            hotelId: session.hotelId,
+            roomTypeId,
+            status: { in: ['CONFIRMED', 'CHECKED_IN'] },
+            AND: [
+              { checkInDate: { lt: checkOutDate } },
+              { checkOutDate: { gt: checkInDate } },
+            ],
+          },
+        });
+
+        if (overlappingCount >= totalRoomsOfType) {
+          return NextResponse.json(
+            { error: `عفواً، لا توجد غرف أو شقق شاغرة وجاهزة من نوع (${roomType.nameAr}) في الفترة المحددة.` },
+            { status: 409 }
+          );
+        }
       }
     }
 
@@ -242,7 +278,7 @@ export async function POST(req: NextRequest) {
           hotelId: session.hotelId,
           guestId: guest.id,
           roomTypeId,
-          assignedRoomId: assignedRoomId || null,
+          assignedRoomId: finalAssignedRoomId || null,
           checkInDate,
           checkOutDate,
           nightsCount,

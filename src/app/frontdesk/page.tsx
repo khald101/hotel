@@ -96,13 +96,29 @@ export default function FrontDeskPage() {
   const handleCheckinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCheckinError('');
+    const targetRoomId =
+      selectedRoomId ||
+      selectedResForCheckin.assignedRoomId ||
+      selectedResForCheckin.assignedRoom?.id ||
+      rooms.find(
+        (r) =>
+          r.roomTypeId === selectedResForCheckin.roomTypeId &&
+          r.occupancyStatus === 'VACANT' &&
+          r.cleaningStatus === 'INSPECTED_PASSED'
+      )?.id;
+
+    if (!targetRoomId) {
+      setCheckinError('لم يتم العثور على غرفة أو شقة جاهزة للتسكين');
+      return;
+    }
+
     try {
       const res = await fetch('/api/frontdesk/checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           reservationId: selectedResForCheckin.id,
-          roomId: selectedRoomId,
+          roomId: targetRoomId,
           keyCardNumber: keyCard,
           overrideReason: overrideReason || undefined,
         }),
@@ -298,9 +314,18 @@ export default function FrontDeskPage() {
                               <button
                                 onClick={() => {
                                   setSelectedResForCheckin(res);
-                                  const targetId = res.assignedRoomId || res.assignedRoom?.id || '';
+                                  const targetRoom =
+                                    res.assignedRoom ||
+                                    rooms.find((r) => r.id === res.assignedRoomId) ||
+                                    rooms.find(
+                                      (r) =>
+                                        r.roomTypeId === res.roomTypeId &&
+                                        r.occupancyStatus === 'VACANT' &&
+                                        r.cleaningStatus === 'INSPECTED_PASSED'
+                                    );
+                                  const targetId = targetRoom?.id || '';
                                   setSelectedRoomId(targetId);
-                                  setKeyCard(`CARD-${res.assignedRoom?.roomNumber || '101'}`);
+                                  setKeyCard(`CARD-${targetRoom?.roomNumber || '101'}`);
                                   setCheckinError('');
                                   setIsChangingRoom(false);
                                 }}
@@ -378,7 +403,13 @@ export default function FrontDeskPage() {
               {(() => {
                 const bookedRoom =
                   selectedResForCheckin.assignedRoom ||
-                  rooms.find((r) => r.id === selectedResForCheckin.assignedRoomId);
+                  rooms.find((r) => r.id === selectedResForCheckin.assignedRoomId) ||
+                  rooms.find(
+                    (r) =>
+                      r.roomTypeId === selectedResForCheckin.roomTypeId &&
+                      r.occupancyStatus === 'VACANT' &&
+                      r.cleaningStatus === 'INSPECTED_PASSED'
+                  );
 
                 const eligibleRooms = rooms.filter(
                   (r) =>
@@ -398,7 +429,7 @@ export default function FrontDeskPage() {
                           <div className="flex items-center gap-1.5">
                             <CheckCircle2 className="w-5 h-5 text-emerald-700" />
                             <span className="text-xs font-black text-emerald-950">
-                              نفس الغرفة التي حجزها النزيل (مثبتة للتسكين):
+                              نفس الغرفة أو الشقة التي حجزها النزيل (مثبتة للتسكين تلقائياً):
                             </span>
                           </div>
                           <span className="px-3.5 py-1 bg-emerald-800 text-white font-mono font-black rounded-xl text-sm shadow-sm">
@@ -409,7 +440,7 @@ export default function FrontDeskPage() {
                           {bookedRoom.roomType?.nameAr || selectedResForCheckin.roomType?.nameAr} • طابق {bookedRoom.floor?.floorNumber} ({bookedRoom.floor?.nameAr})
                         </p>
                         <div className="flex items-center justify-between pt-2 border-t border-emerald-200/60 text-[11px]">
-                          <span className="text-emerald-700 font-medium">حالة الغرفة الفندقية:</span>
+                          <span className="text-emerald-700 font-medium">حالة النظافة والتفتيش:</span>
                           <span className="font-bold text-emerald-900">
                             {bookedRoom.cleaningStatus === 'INSPECTED_PASSED'
                               ? 'جاهزة ومفتشة ومعتمدة للتسكين الفوري ✅'
@@ -419,8 +450,8 @@ export default function FrontDeskPage() {
                       </div>
 
                       <div className="flex items-center justify-between px-1 text-[11px]">
-                        <span className="text-slate-500">
-                          ✓ سيتم تسكين النزيل في نفس الغرفة المحجوزة (#{bookedRoom.roomNumber})
+                        <span className="text-slate-500 font-bold text-emerald-800">
+                          ✓ سيتم تسكين النزيل في نفس الوحدة المحجوزة (#{bookedRoom.roomNumber}) مباشرة
                         </span>
                         <button
                           type="button"
