@@ -1,0 +1,581 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. HOTEL & PROPERTY STRUCTURE
+model Hotel {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  nameAr         String
+  nameEn         String
+  commercialReg  String?  // السجل التجاري
+  vatNumber      String?  // الرقم الضريبي
+  phone          String
+  email          String
+  city           String
+  address        String
+  timezone       String   @default("Asia/Riyadh")
+  currency       String   @default("SAR")
+  taxRate        Float    @default(0.15) // 15% VAT
+  checkInTime    String   @default("14:00")
+  checkOutTime   String   @default("12:00")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  floors         Floor[]
+  roomTypes      RoomType[]
+  rooms          Room[]
+  users          User[]
+  reservations   Reservation[]
+  folios         Folio[]
+  invoices       Invoice[]
+  inventoryItems InventoryItem[]
+  auditLogs      AuditLog[]
+  outlets        RestaurantOutlet[]
+  pricingRules   PricingRule[]
+  cashierShifts  CashierShift[]
+  vendors        Vendor[]
+  purchaseOrders PurchaseOrder[]
+  shamousRecords ShamousRecord[]
+  channelLogs    ChannelSyncLog[]
+}
+
+model Floor {
+  id          String   @id @default(cuid())
+  hotelId     String
+  floorNumber Int
+  nameAr      String
+  nameEn      String?
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  rooms       Room[]
+
+  @@unique([hotelId, floorNumber])
+}
+
+// 2. ROOM TYPES & ROOMS
+model RoomType {
+  id           String   @id @default(cuid())
+  hotelId      String
+  code         String   // SGL, DBL, FAM, STE, EXC
+  nameAr       String
+  nameEn       String?
+  basePrice    Float
+  maxOccupancy Int      @default(2)
+  bedType      String   @default("سرير مزدوج")
+  amenities    String   @default("[]")
+  description  String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  hotel        Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  rooms        Room[]
+  reservations Reservation[]
+
+  @@unique([hotelId, code])
+}
+
+model Room {
+  id                String   @id @default(cuid())
+  hotelId           String
+  floorId           String
+  roomTypeId        String
+  roomNumber        String   // Unique per hotel
+
+  // Distinct Statuses as required
+  occupancyStatus   String   @default("VACANT") // VACANT, RESERVED, OCCUPIED, CHECKED_OUT, BLOCKED
+  cleaningStatus    String   @default("CLEANED") // PENDING_CLEANING, CLEANING_IN_PROGRESS, CLEANED, PENDING_INSPECTION, INSPECTED_PASSED, NEEDS_RECLEAN
+  maintenanceStatus String   @default("OPERATIONAL") // OPERATIONAL, ISSUE_REPORTED, UNDER_MAINTENANCE, AWAITING_PARTS, REPAIRED_PENDING_APPROVAL
+  saleStatus        String   @default("AVAILABLE") // AVAILABLE, OUT_OF_ORDER, TEMPORARILY_BLOCKED
+
+  features          String?  // JSON or comma-separated: SeaView, Balcony, NonSmoking
+  notes             String?
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  hotel             Hotel              @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  floor             Floor              @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  roomType          RoomType           @relation(fields: [roomTypeId], references: [id])
+  reservations      Reservation[]
+  stayRecords       StayRecord[]
+  housekeepingTasks HousekeepingTask[]
+  maintenanceTickets MaintenanceTicket[]
+
+  @@unique([hotelId, roomNumber])
+}
+
+// 3. USERS, ROLES & PERMISSIONS
+model User {
+  id           String   @id @default(cuid())
+  hotelId      String
+  username     String   @unique
+  fullName     String
+  email        String?
+  phone        String?
+  passwordHash String
+  role         String   // ADMIN, GENERAL_MANAGER, RECEPTIONIST, HOUSEKEEPING_SUPERVISOR, CLEANER, CUSHION_MANAGER, MAINTENANCE_TECH, ACCOUNTANT, RESTAURANT_STAFF
+  jobTitle     String
+  permissions  String?  // JSON string of fine-grained override permissions
+  department   String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  hotel        Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  auditLogs    AuditLog[]
+  assignedHousekeepingTasks HousekeepingTask[] @relation("AssignedCleaner")
+  inspectedHousekeepingTasks HousekeepingTask[] @relation("Inspector")
+  reportedMaintenanceTickets MaintenanceTicket[] @relation("TicketReporter")
+  assignedMaintenanceTickets MaintenanceTicket[] @relation("TicketAssignee")
+  cashierShifts  CashierShift[]
+}
+
+// 4. GUESTS & CRM
+model Guest {
+  id             String   @id @default(cuid())
+  nationalId     String   // الهوية الوطنية أو الإقامة أو جواز السفر (شموس)
+  idType         String   @default("NATIONAL_ID") // NATIONAL_ID, IQAMA, PASSPORT, GCC_ID
+  fullNameAr     String
+  fullNameEn     String?
+  phone          String
+  email          String?
+  nationality    String   @default("SA")
+  isVip          Boolean  @default(false)
+  vipLevel       String?
+  preferences    String?
+  blacklisted    Boolean  @default(false)
+  blacklistReason String?
+  totalStays     Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  reservations   Reservation[]
+  stayRecords    StayRecord[]
+  folios         Folio[]
+
+  @@unique([idType, nationalId])
+}
+
+// 5. RESERVATIONS & STAY RECORDS
+model Reservation {
+  id              String   @id @default(cuid())
+  confirmationNo  String   @unique // RES-2026-0001
+  hotelId         String
+  guestId         String
+  roomTypeId      String
+  assignedRoomId  String?
+  checkInDate     String   // YYYY-MM-DD
+  checkOutDate    String   // YYYY-MM-DD
+  nightsCount     Int
+  adultsCount     Int      @default(1)
+  childrenCount   Int      @default(0)
+  nightlyRate     Float
+  subtotal        Float
+  taxAmount       Float
+  discountAmount  Float    @default(0)
+  totalAmount     Float
+  status          String   @default("CONFIRMED") // DRAFT, CONFIRMED, CHECKED_IN, CHECKED_OUT, CANCELLED, NO_SHOW
+  source          String   @default("DIRECT") // DIRECT, PHONE, WALK_IN, BOOKING_COM, EXPEDIA, CORPORATE
+  guaranteeType   String   @default("CREDIT_CARD") // CREDIT_CARD, CASH_DEPOSIT, COMPANY_LETTER, NONE
+  notes           String?
+  specialRequests String?
+  channelRef      String?
+  pricingRuleName String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  hotel           Hotel       @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  guest           Guest       @relation(fields: [guestId], references: [id])
+  roomType        RoomType    @relation(fields: [roomTypeId], references: [id])
+  assignedRoom    Room?       @relation(fields: [assignedRoomId], references: [id])
+  stayRecord      StayRecord?
+  folios          Folio[]
+}
+
+model StayRecord {
+  id               String    @id @default(cuid())
+  reservationId    String    @unique
+  guestId          String
+  roomId           String
+  actualCheckIn    DateTime  @default(now())
+  actualCheckOut   DateTime?
+  checkedInBy      String    // Username or User ID
+  checkedOutBy     String?
+  status           String    @default("ACTIVE") // ACTIVE, COMPLETED, TRANSFERRED
+  roomKeyCardNo    String?
+  shamousRef       String?
+  createdAt        DateTime  @default(now())
+
+  reservation      Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  guest            Guest       @relation(fields: [guestId], references: [id])
+  room             Room        @relation(fields: [roomId], references: [id])
+}
+
+// 6. FOLIOS, PAYMENTS & INVOICES (ZATCA COMPLIANT)
+model Folio {
+  id            String      @id @default(cuid())
+  folioNumber   String      @unique // FOL-2026-XXXX
+  hotelId       String
+  guestId       String
+  reservationId String?
+  status        String      @default("OPEN") // OPEN, SETTLED, CLOSED
+  totalCharges  Float       @default(0)
+  totalPayments Float       @default(0)
+  balance       Float       @default(0)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  hotel         Hotel       @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  guest         Guest       @relation(fields: [guestId], references: [id])
+  reservation   Reservation? @relation(fields: [reservationId], references: [id])
+  items         FolioItem[]
+  payments      Payment[]
+  invoices      Invoice[]
+}
+
+model FolioItem {
+  id          String   @id @default(cuid())
+  folioId     String
+  category    String   // ROOM_CHARGE, RESTAURANT, MINIBAR, LAUNDRY, SPA, SERVICE, TAX
+  description String
+  quantity    Int      @default(1)
+  unitPrice   Float
+  taxAmount   Float    @default(0)
+  totalAmount Float
+  postedBy    String
+  postedAt    DateTime @default(now())
+
+  folio       Folio    @relation(fields: [folioId], references: [id], onDelete: Cascade)
+}
+
+model Payment {
+  id             String   @id @default(cuid())
+  folioId        String
+  paymentNumber  String   @unique // PAY-2026-XXXX
+  amount         Float
+  method         String   // CASH, CREDIT_CARD, MADA, BANK_TRANSFER, INTERNAL_WALLET
+  transactionRef String?
+  idempotencyKey String?  @unique
+  status         String   @default("COMPLETED") // COMPLETED, REFUNDED, VOIDED
+  notes          String?
+  receivedBy     String
+  createdAt      DateTime @default(now())
+
+  folio          Folio    @relation(fields: [folioId], references: [id], onDelete: Cascade)
+}
+
+model Invoice {
+  id             String   @id @default(cuid())
+  invoiceNumber  String   @unique // INV-2026-00001
+  hotelId        String
+  folioId        String
+  uuid           String   @unique // ZATCA UUID
+  issueDate      DateTime @default(now())
+  sellerName     String
+  sellerVat      String
+  buyerName      String
+  buyerVat       String?
+  subtotal       Float
+  taxAmount      Float
+  totalInclusive Float
+  zatcaQrCode    String   // Base64 TLV Encoded QR
+  zatcaStatus    String   @default("GENERATED") // GENERATED, REPORTED, ACCEPTED
+  invoiceType    String   @default("SIMPLIFIED_TAX_INVOICE") // SIMPLIFIED_TAX_INVOICE, STANDARD_TAX_INVOICE
+  createdAt      DateTime @default(now())
+
+  hotel          Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  folio          Folio    @relation(fields: [folioId], references: [id])
+}
+
+// 7. HOUSEKEEPING & INSPECTION WORKFLOW
+model HousekeepingTask {
+  id             String    @id @default(cuid())
+  taskNumber     String    @unique // HSK-2026-XXXX
+  roomId         String
+  assignedToId   String?
+  priority       String    @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
+  status         String    @default("PENDING") // PENDING, IN_PROGRESS, CLEANED, PENDING_INSPECTION, INSPECTED_PASSED, NEEDS_RECLEAN
+  cleanerNotes   String?
+  inspectorNotes String?
+  inspectedById  String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  inspectedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  room           Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  assignedTo     User?     @relation("AssignedCleaner", fields: [assignedToId], references: [id])
+  inspectedBy    User?     @relation("Inspector", fields: [inspectedById], references: [id])
+}
+
+// 8. MAINTENANCE & ASSET MANAGEMENT
+model MaintenanceTicket {
+  id              String    @id @default(cuid())
+  ticketNumber    String    @unique // MNT-2026-XXXX
+  roomId          String?
+  assetName       String?
+  issueType       String    // PLUMBING, ELECTRICAL, HVAC, FURNITURE, OTHER
+  priority        String    @default("MEDIUM") // LOW, MEDIUM, HIGH, EMERGENCY
+  status          String    @default("NEW") // NEW, ASSIGNED, IN_PROGRESS, AWAITING_PARTS, RESOLVED, CLOSED
+  reportedById    String
+  assignedToId    String?
+  description     String
+  resolutionNotes String?
+  blocksRoomSale  Boolean   @default(false)
+  reportedAt      DateTime  @default(now())
+  resolvedAt      DateTime?
+
+  room            Room?     @relation(fields: [roomId], references: [id])
+  reportedBy      User      @relation("TicketReporter", fields: [reportedById], references: [id])
+  assignedTo      User?     @relation("TicketAssignee", fields: [assignedToId], references: [id])
+}
+
+// 9. RESTAURANTS & POS
+model RestaurantOutlet {
+  id        String   @id @default(cuid())
+  hotelId   String
+  code      String
+  nameAr    String
+  nameEn    String
+  active    Boolean  @default(true)
+
+  hotel     Hotel        @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  categories MenuCategory[]
+  posOrders  PosOrder[]
+}
+
+model MenuCategory {
+  id        String   @id @default(cuid())
+  outletId  String
+  nameAr    String
+  nameEn    String
+  sortOrder Int      @default(0)
+
+  outlet    RestaurantOutlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  items     MenuItem[]
+}
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  categoryId  String
+  nameAr      String
+  nameEn      String
+  price       Float
+  taxIncluded Boolean  @default(true)
+  available   Boolean  @default(true)
+
+  category    MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  orderItems  PosOrderItem[]
+}
+
+model PosOrder {
+  id          String   @id @default(cuid())
+  orderNumber String   @unique // POS-2026-XXXX
+  outletId    String
+  targetType  String   // DINE_IN, ROOM_CHARGE, TAKEAWAY
+  roomNumber  String?
+  guestName   String?
+  subtotal    Float
+  taxAmount   Float
+  totalAmount Float
+  status      String   @default("COMPLETED") // PENDING, COMPLETED, CANCELLED
+  paymentMode String   // CASH, CARD, ROOM_FOLIO
+  folioId     String?
+  createdAt   DateTime @default(now())
+
+  outlet      RestaurantOutlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  items       PosOrderItem[]
+}
+
+model PosOrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  menuItemId String
+  name       String
+  quantity   Int
+  unitPrice  Float
+  totalPrice Float
+
+  order      PosOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+}
+
+// 10. INVENTORY & PURCHASING
+model InventoryItem {
+  id           String   @id @default(cuid())
+  hotelId      String
+  sku          String   @unique
+  nameAr       String
+  nameEn       String
+  category     String   // HOUSEKEEPING, AMENITIES, FOOD_BEVERAGE, MAINTENANCE
+  unit         String   // PCS, BOX, BOTTLE, KG
+  minStock     Int      @default(10)
+  currentStock Int      @default(0)
+  unitCost     Float    @default(0)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  hotel        Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  transactions StockTransaction[]
+  poItems      PurchaseOrderItem[]
+}
+
+model StockTransaction {
+  id          String   @id @default(cuid())
+  itemId      String
+  type        String   // RECEIVE, CONSUME, ADJUST, TRANSFER
+  quantity    Int
+  reference   String?
+  notes       String?
+  performedBy String
+  createdAt   DateTime @default(now())
+
+  item        InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+}
+
+// 11. AUDIT LOG & COMPLIANCE
+model AuditLog {
+  id         String   @id @default(cuid())
+  hotelId    String
+  userId     String?
+  username   String
+  action     String   // CHECK_IN, CHECK_OUT, CREATE_RESERVATION, INSPECT_ROOM, PAYMENT_RECEIVED, CANCEL_BILL
+  entityType String   // Room, Reservation, Folio, User, Invoice
+  entityId   String
+  details    String   // Description or JSON diff
+  createdAt  DateTime @default(now())
+
+  hotel      Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  user       User?    @relation(fields: [userId], references: [id])
+}
+
+// 12. DYNAMIC & SEASONAL PRICING ENGINE
+model PricingRule {
+  id          String   @id @default(cuid())
+  hotelId     String
+  nameAr      String
+  nameEn      String?
+  roomTypeId  String?  // null applies to all room types
+  startDate   String   // YYYY-MM-DD
+  endDate     String   // YYYY-MM-DD
+  priceType   String   @default("MULTIPLIER") // MULTIPLIER, FIXED_PRICE
+  value       Float    // e.g. 1.25 for +25%, or 950 for fixed rate
+  minNights   Int      @default(1)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  hotel       Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+}
+
+// 13. CASHIER SHIFT MANAGEMENT & DRAWER BALANCING
+model CashierShift {
+  id            String    @id @default(cuid())
+  hotelId       String
+  shiftNumber   String    @unique // SHF-2026-XXXX
+  userId        String
+  openedAt      DateTime  @default(now())
+  closedAt      DateTime?
+  startingCash  Float     @default(0)
+  cashPayments  Float     @default(0)
+  cardPayments  Float     @default(0)
+  expectedCash  Float     @default(0)
+  actualCash    Float?
+  difference    Float?
+  status        String    @default("OPEN") // OPEN, CLOSED
+  closingNotes  String?
+  createdAt     DateTime  @default(now())
+
+  hotel         Hotel     @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  user          User      @relation(fields: [userId], references: [id])
+}
+
+// 14. VENDORS & PROCUREMENT (PURCHASE ORDERS)
+model Vendor {
+  id             String   @id @default(cuid())
+  hotelId        String
+  nameAr         String
+  contactPerson  String?
+  phone          String?
+  email          String?
+  taxNumber      String?
+  category       String   @default("GENERAL") // FOOD_BEVERAGE, HOUSEKEEPING, LINEN, MAINTENANCE
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  hotel          Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
+}
+
+model PurchaseOrder {
+  id             String   @id @default(cuid())
+  poNumber       String   @unique // PO-2026-XXXX
+  hotelId        String
+  vendorId       String
+  status         String   @default("DRAFT") // DRAFT, ORDERED, RECEIVED, CANCELLED
+  orderDate      DateTime @default(now())
+  deliveryDate   DateTime?
+  totalAmount    Float    @default(0)
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  hotel          Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  vendor         Vendor   @relation(fields: [vendorId], references: [id])
+  items          PurchaseOrderItem[]
+}
+
+model PurchaseOrderItem {
+  id              String   @id @default(cuid())
+  purchaseOrderId String
+  inventoryItemId String?
+  description     String
+  quantity        Int
+  unitCost        Float
+  totalCost       Float
+
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+}
+
+// 15. SHAMOUS INTEGRATION DISPATCH LOG
+model ShamousRecord {
+  id              String   @id @default(cuid())
+  hotelId         String
+  reservationId   String?
+  guestNationalId String
+  guestName       String
+  idType          String
+  roomNumber      String
+  transmissionRef String   @unique // SHM-2026-XXXXX
+  status          String   @default("TRANSMITTED") // TRANSMITTED, ACKNOWLEDGED
+  transmittedAt   DateTime @default(now())
+  responseCode    String   @default("ACK_OK_200")
+
+  hotel           Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+}
+
+// 16. CHANNEL MANAGER SYNC AUDIT LOG
+model ChannelSyncLog {
+  id             String   @id @default(cuid())
+  hotelId        String
+  channelName    String   // BOOKING_COM, EXPEDIA, AGODA, GDS
+  action         String   // SYNC_RATES, SYNC_AVAILABILITY, IMPORT_RESERVATION
+  status         String   @default("SUCCESS")
+  payload        String?  // JSON
+  createdAt      DateTime @default(now())
+
+  hotel          Hotel    @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+}
+
+
